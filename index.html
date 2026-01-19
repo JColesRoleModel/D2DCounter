@@ -10,8 +10,11 @@
     
     <title>D2D Resources | Future Tracker</title>
     
-    <!-- PWA Manifest (Data URI for single-file portability) -->
+    <!-- PWA Manifest -->
     <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiRDJEIFJlc291cmNlcyIs" />
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -58,14 +61,16 @@
             --blob-color-1: #f59e0b;
             --blob-color-2: #1e3a8a;
             --blob-color-3: #4c1d95;
+            --header-height: 80px;
+            --footer-height: 80px;
         }
 
         /* Light Mode Variables */
         body.light-mode {
             --bg-color: #f0f9ff;
             --text-color: #0f172a;
-            --glass-bg: rgba(255, 255, 255, 0.7);
-            --glass-card-bg: rgba(255, 255, 255, 0.5);
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-card-bg: rgba(255, 255, 255, 0.6);
             --glass-border: rgba(0, 0, 0, 0.05);
             --blob-color-1: #fbbf24;
             --blob-color-2: #60a5fa;
@@ -76,9 +81,11 @@
             background-color: var(--bg-color);
             color: var(--text-color);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            overflow-x: hidden;
+            overflow: hidden; /* Prevent body scroll, handle in main */
             transition: background-color 0.5s ease, color 0.5s ease;
             -webkit-tap-highlight-color: transparent;
+            height: 100vh;
+            width: 100vw;
         }
         
         /* Animated Background */
@@ -140,6 +147,62 @@
         .safe-area-pb {
             padding-bottom: env(safe-area-inset-bottom, 20px);
         }
+
+        /* Leaflet Overrides */
+        .leaflet-container {
+            font-family: inherit;
+            z-index: 10;
+        }
+        .leaflet-control-attribution {
+            display: none;
+        }
+        .custom-div-icon {
+            background: transparent;
+            border: none;
+        }
+        /* New Pin Styling */
+        .marker-pin-enhanced {
+            width: 36px;
+            height: 36px;
+            border-radius: 50% 50% 50% 0;
+            background: #fff;
+            position: absolute;
+            transform: rotate(-45deg);
+            left: 50%;
+            top: 50%;
+            margin: -20px 0 0 -20px;
+            box-shadow: 0 3px 15px rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid white;
+            transition: transform 0.2s;
+        }
+        .marker-pin-enhanced svg {
+            transform: rotate(45deg); /* Counter rotate icon */
+            width: 18px;
+            height: 18px;
+            color: white;
+        }
+        .marker-pin-enhanced:active {
+            transform: rotate(-45deg) scale(1.1);
+        }
+        
+        /* Map Popup Styling */
+        .leaflet-popup-content-wrapper {
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(10px);
+            color: white;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 0;
+        }
+        .leaflet-popup-content {
+            margin: 10px;
+        }
+        .leaflet-popup-tip {
+            background: rgba(15, 23, 42, 0.95);
+        }
     </style>
 
     <!-- Import Map for Modules -->
@@ -157,6 +220,9 @@
     }
     </script>
     
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
     <!-- Babel for JSX compilation in browser -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
@@ -172,17 +238,33 @@
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useMemo } from 'react';
+        import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import { 
             DoorOpen, User, MessageCircle, ArrowRight, Calendar, DollarSign, 
             CheckCircle, XCircle, Zap, Sun, Moon, Home, Phone, Mail, TrendingUp, 
             Award, Smile, Frown, ThumbsUp, ThumbsDown, ClipboardList, Target, 
             LayoutDashboard, BarChart2, Settings, Key, Minus, Plus, Save, 
-            RefreshCw, Trash2, PlusCircle, X, AlertTriangle, Check, Trophy, Flame, Download
+            RefreshCw, Trash2, PlusCircle, X, AlertTriangle, Check, Trophy, Flame, Download, Map as MapIcon,
+            MapPin, List, Database, PenSquare
         } from 'lucide-react';
         import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
         import confetti from 'canvas-confetti';
+
+        // --- RAW SVG STRINGS FOR LEAFLET ICONS ---
+        // Since we can't render React components to HTML string easily in browser without server DOM
+        const RAW_ICONS = {
+            'door': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14"/><path d="M2 20h3"/><path d="M13 20h9"/><path d="M10 12v.01"/><path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z"/></svg>',
+            'user': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+            'message-circle': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/></svg>',
+            'arrow-right': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
+            'calendar': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>',
+            'default': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/></svg>'
+        };
+
+        const getIconSvg = (iconName) => {
+            return RAW_ICONS[iconName] || RAW_ICONS['default'];
+        };
 
         // --- CONSTANTS ---
         const DEFAULT_METRICS = [
@@ -219,12 +301,12 @@
 
         const INDUSTRY_AVERAGE_RATIO = 50;
         const STORAGE_KEY = 'd2d_resources_data_v2'; 
+        const MAX_STORAGE_BYTES = 4500000; // ~4.5MB safe limit
 
         // --- SERVICES ---
         const getInitialState = () => {
             try {
                 let stored = localStorage.getItem(STORAGE_KEY);
-                // Migration support
                 if (!stored) stored = localStorage.getItem('d2d_resources_data_v1');
 
                 if (stored) {
@@ -232,32 +314,35 @@
                     if (!parsed.metrics || parsed.metrics.length === 0) {
                         parsed.metrics = DEFAULT_METRICS;
                     }
-                    if (!parsed.theme) parsed.theme = 'dark'; // Default back to Dark Mode
-                    
-                    // --- MIGRATION FIX: AUTO-CORRECT LABELS ---
-                    if (parsed.metrics) {
-                        parsed.metrics = parsed.metrics.map(m => {
-                            if (m.id === 'doors' && m.label === 'Doors Knocked') {
-                                return { ...m, label: 'Doors' };
-                            }
-                            return m;
-                        });
-                    }
-                    
+                    if (!parsed.theme) parsed.theme = 'dark'; 
                     return parsed;
                 }
             } catch (e) {
                 console.error("Failed to load state", e);
             }
-            return { metrics: DEFAULT_METRICS, logs: [], theme: 'dark' }; // Default to dark
+            return { metrics: DEFAULT_METRICS, logs: [], theme: 'dark' };
         };
 
         const saveState = (state) => {
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+                const stringified = JSON.stringify(state);
+                localStorage.setItem(STORAGE_KEY, stringified);
+                return stringified.length; 
             } catch (e) {
                 console.error("Failed to save state", e);
+                return -1; 
             }
+        };
+
+        const getColorHex = (tailwindClass) => {
+            if (tailwindClass.includes('blue')) return '#60a5fa';
+            if (tailwindClass.includes('indigo')) return '#818cf8';
+            if (tailwindClass.includes('purple')) return '#c084fc';
+            if (tailwindClass.includes('pink')) return '#f472b6';
+            if (tailwindClass.includes('gold') || tailwindClass.includes('yellow')) return '#f59e0b';
+            if (tailwindClass.includes('green')) return '#4ade80';
+            if (tailwindClass.includes('red')) return '#f87171';
+            return '#94a3b8';
         };
 
         // --- HELPER FUNCTIONS ---
@@ -297,7 +382,7 @@
 
         const makePlural = (text) => {
             if (!text) return text;
-            if (text.toLowerCase().endsWith('s')) return text; // Already plural
+            if (text.toLowerCase().endsWith('s')) return text; 
             return text + 's';
         };
 
@@ -310,8 +395,8 @@
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 p-4">
                     <div className="glass-panel w-full max-w-sm rounded-2xl p-6 shadow-2xl border border-d2d-gold/20 scale-100 animate-in zoom-in-95 duration-200">
                         <div className="flex items-start gap-4 mb-4">
-                            <div className={`p-3 rounded-full ${type === 'confirm' ? 'bg-d2d-gold/10 text-d2d-gold' : 'bg-blue-500/10 text-blue-400'}`}>
-                                {type === 'confirm' ? <AlertTriangle size={24} /> : <CheckCircle size={24} />}
+                            <div className={`p-3 rounded-full ${type === 'confirm' || type === 'alert' ? 'bg-d2d-gold/10 text-d2d-gold' : 'bg-blue-500/10 text-blue-400'}`}>
+                                {type === 'confirm' ? <AlertTriangle size={24} /> : type === 'alert' ? <Database size={24} /> : <CheckCircle size={24} />}
                             </div>
                             <div>
                                 <h3 className="text-xl font-bold text-white mb-1">{title}</h3>
@@ -320,7 +405,7 @@
                         </div>
                         
                         <div className="flex gap-3 justify-end mt-6">
-                            {type === 'confirm' && (
+                            {(type === 'confirm' || type === 'prune') && (
                                 <button 
                                     onClick={onClose}
                                     className="px-4 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/10 transition font-medium text-sm"
@@ -332,7 +417,7 @@
                                 onClick={() => { if (onConfirm) onConfirm(); onClose(); }}
                                 className="px-6 py-3 rounded-xl bg-d2d-gold text-black font-bold shadow-[0_0_15px_rgba(245,158,11,0.3)] hover:bg-yellow-400 transition text-sm active:scale-95"
                             >
-                                {type === 'confirm' ? 'Confirm' : 'Got it'}
+                                {type === 'prune' ? 'Clean Up' : type === 'confirm' ? 'Confirm' : 'Got it'}
                             </button>
                         </div>
                     </div>
@@ -340,6 +425,401 @@
             );
         };
 
+        // --- GLOBAL HEADER ---
+        const TopBar = ({ onHome }) => {
+            return (
+                <div className="fixed top-0 left-0 right-0 z-[60] h-[80px] glass-panel border-b border-d2d-glassBorder flex items-center justify-between px-4 safe-area-top backdrop-blur-xl shadow-lg">
+                    {/* Left: Brand */}
+                    <div className="flex items-center">
+                        <h1 className="text-lg font-black text-white tracking-widest uppercase" style={{textShadow: '0 0 10px rgba(0,0,0,0.5)'}}>
+                            D2D Resources
+                        </h1>
+                    </div>
+
+                    {/* Center: Key Icon */}
+                    <div className="absolute left-1/2 -translate-x-1/2 bg-d2d-gold/10 p-2 rounded-full border border-d2d-gold/30 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+                        <Key className="text-d2d-gold" size={24} />
+                    </div>
+
+                    {/* Right: Quote & Home */}
+                    <div className="flex items-center gap-3">
+                        <p className="hidden sm:block text-[8px] text-gray-400 italic text-right leading-tight max-w-[120px]">
+                            Putting the keys to <span className="text-d2d-gold font-bold">YOUR OWN</span> success in your own hands
+                        </p>
+                        <button 
+                            onClick={onHome}
+                            className="p-2 bg-white/5 rounded-full hover:bg-white/10 text-white border border-white/10 transition-colors"
+                        >
+                            <Home size={20} />
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- MAP VIEW COMPONENT ---
+        const MapView = ({ state, onLog, onUpdateLog, theme }) => {
+            const mapRef = useRef(null);
+            const mapContainerRef = useRef(null);
+            const [drawerOpen, setDrawerOpen] = useState(false);
+            const [selectedLocation, setSelectedLocation] = useState(null);
+            const [editingLogId, setEditingLogId] = useState(null); // ID of log being edited, null if new
+
+            // Form State
+            const [formData, setFormData] = useState({
+                firstName: '',
+                lastName: '',
+                phone: '',
+                note: '',
+                date: new Date().toISOString().split('T')[0],
+                time: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+                metricId: null
+            });
+
+            // Initialize Map
+            useEffect(() => {
+                if (!mapContainerRef.current) return;
+                if (mapRef.current) return; // Already initialized
+
+                const lastLogWithLoc = [...state.logs].reverse().find(l => l.lat && l.lng);
+                const initialView = lastLogWithLoc ? [lastLogWithLoc.lat, lastLogWithLoc.lng] : [39.8283, -98.5795];
+                const initialZoom = lastLogWithLoc ? 16 : 4;
+
+                const map = L.map(mapContainerRef.current, {
+                    zoomControl: false,
+                    attributionControl: false
+                }).setView(initialView, initialZoom);
+
+                // Layers
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
+
+                // Handle Empty Space Click (New Pin)
+                map.on('click', (e) => {
+                    setEditingLogId(null); // Clear editing mode
+                    setSelectedLocation(e.latlng);
+                    setFormData({
+                        firstName: '',
+                        lastName: '',
+                        phone: '',
+                        note: '',
+                        date: new Date().toISOString().split('T')[0],
+                        time: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+                        metricId: null
+                    });
+                });
+
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(pos => {
+                        map.flyTo([pos.coords.latitude, pos.coords.longitude], 18);
+                    });
+                }
+
+                mapRef.current = map;
+
+                return () => {
+                    if (mapRef.current) {
+                        mapRef.current.remove();
+                        mapRef.current = null;
+                    }
+                };
+            }, []);
+
+            // Update Markers
+            useEffect(() => {
+                if (!mapRef.current) return;
+                
+                mapRef.current.eachLayer((layer) => {
+                    if (layer instanceof L.Marker) {
+                        mapRef.current.removeLayer(layer);
+                    }
+                });
+
+                state.logs.forEach(log => {
+                    if (log.lat && log.lng && log.value > 0) {
+                        const metric = state.metrics.find(m => m.metricId === log.metricId) || state.metrics.find(m => m.id === log.metricId);
+                        if (!metric) return;
+                        
+                        const color = getColorHex(metric.color);
+                        const iconSvg = getIconSvg(metric.icon);
+                        
+                        // Enhanced Pin Styling with Icon
+                        const customIcon = L.divIcon({
+                            className: 'custom-div-icon',
+                            html: `<div class="marker-pin-enhanced" style="background-color: ${color}; border-color: white;">${iconSvg}</div>`,
+                            iconSize: [40, 40],
+                            iconAnchor: [20, 40],
+                            popupAnchor: [0, -40]
+                        });
+
+                        const marker = L.marker([log.lat, log.lng], { 
+                            icon: customIcon,
+                            draggable: true, 
+                            autoPan: true
+                        }).addTo(mapRef.current);
+
+                        // Click to Edit
+                        marker.on('click', (e) => {
+                            L.DomEvent.stopPropagation(e); // Don't trigger map click
+                            setEditingLogId(log.id);
+                            setSelectedLocation({ lat: log.lat, lng: log.lng });
+                            
+                            // Populate form
+                            const dateObj = new Date(log.timestamp);
+                            setFormData({
+                                firstName: log.meta?.firstName || '',
+                                lastName: log.meta?.lastName || '',
+                                phone: log.meta?.phone || '',
+                                note: log.meta?.note || '',
+                                date: log.meta?.manualDate || dateObj.toISOString().split('T')[0],
+                                time: log.meta?.manualTime || dateObj.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+                                metricId: log.metricId
+                            });
+                        });
+
+                        // Handle Drag End (Relocation)
+                        marker.on('dragend', function(event) {
+                            const marker = event.target;
+                            const position = marker.getLatLng();
+                            onUpdateLog(log.id, { lat: position.lat, lng: position.lng });
+                        });
+                    }
+                });
+            }, [state.logs, state.metrics, onUpdateLog]);
+
+            const handleSaveLog = () => {
+                if (selectedLocation && formData.metricId) {
+                    const dateTimeStr = `${formData.date}T${formData.time}`;
+                    const timestamp = new Date(dateTimeStr).getTime() || Date.now();
+
+                    const meta = {
+                        firstName: formData.firstName,
+                        lastName: formData.lastName,
+                        phone: formData.phone,
+                        note: formData.note,
+                        manualDate: formData.date,
+                        manualTime: formData.time
+                    };
+
+                    if (editingLogId) {
+                        // Update existing
+                        onUpdateLog(editingLogId, {
+                            metricId: formData.metricId,
+                            meta: meta,
+                            timestamp: timestamp,
+                            lat: selectedLocation.lat,
+                            lng: selectedLocation.lng
+                        });
+                    } else {
+                        // Create new
+                        onLog(formData.metricId, 1, { lat: selectedLocation.lat, lng: selectedLocation.lng }, meta, timestamp);
+                    }
+                    setSelectedLocation(null);
+                    setEditingLogId(null);
+                }
+            };
+
+            const sortedLogs = [...state.logs].sort((a,b) => b.timestamp - a.timestamp).slice(0, 50);
+
+            return (
+                <div className="relative w-full h-full bg-gray-900">
+                    <div ref={mapContainerRef} className="absolute inset-0 z-0" />
+                    
+                    {/* Manual Drop/Edit Modal */}
+                    {selectedLocation && (
+                        <div className="absolute inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+                            <div className="bg-slate-900 border-t sm:border border-white/10 w-full max-w-md rounded-t-2xl sm:rounded-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-white font-bold text-lg">{editingLogId ? 'Edit Log Details' : 'Log New Action'}</h3>
+                                    <button onClick={() => setSelectedLocation(null)} className="p-2 bg-white/5 rounded-full text-white"><X size={20}/></button>
+                                </div>
+                                
+                                <div className="space-y-3 mb-6">
+                                    {/* Metric Selection */}
+                                    <div className="grid grid-cols-5 gap-2 mb-4">
+                                        {state.metrics.map(m => (
+                                            <button 
+                                                key={m.id}
+                                                onClick={() => setFormData(prev => ({ ...prev, metricId: m.id }))}
+                                                className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${
+                                                    formData.metricId === m.id 
+                                                    ? `bg-white/10 border-${m.color.split('-')[1]}-400 ring-1 ring-${m.color.split('-')[1]}-400` 
+                                                    : 'bg-white/5 border-transparent opacity-60 hover:opacity-100'
+                                                }`}
+                                            >
+                                                <div className={`${m.color}`}>{ICON_MAP[m.icon]}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* Row 1: First/Last Name */}
+                                    <div className="flex gap-3">
+                                        <input 
+                                            type="text" 
+                                            placeholder="First Name"
+                                            value={formData.firstName}
+                                            onChange={e => setFormData({...formData, firstName: e.target.value})}
+                                            className="w-1/2 bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:border-d2d-gold focus:outline-none"
+                                        />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Last Name"
+                                            value={formData.lastName}
+                                            onChange={e => setFormData({...formData, lastName: e.target.value})}
+                                            className="w-1/2 bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:border-d2d-gold focus:outline-none"
+                                        />
+                                    </div>
+
+                                    {/* Row 2: Phone */}
+                                    <input 
+                                        type="tel" 
+                                        placeholder="Phone Number"
+                                        value={formData.phone}
+                                        onChange={e => setFormData({...formData, phone: e.target.value})}
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:border-d2d-gold focus:outline-none"
+                                    />
+
+                                    {/* Row 3: Note */}
+                                    <textarea 
+                                        placeholder="Add a note..."
+                                        rows="3"
+                                        value={formData.note}
+                                        onChange={e => setFormData({...formData, note: e.target.value})}
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:border-d2d-gold focus:outline-none resize-none"
+                                    ></textarea>
+
+                                    {/* Row 4: Date/Time */}
+                                    <div className="flex gap-3">
+                                        <input 
+                                            type="time" 
+                                            value={formData.time}
+                                            onChange={e => setFormData({...formData, time: e.target.value})}
+                                            className="w-1/2 bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:border-d2d-gold focus:outline-none"
+                                        />
+                                        <input 
+                                            type="date" 
+                                            value={formData.date}
+                                            onChange={e => setFormData({...formData, date: e.target.value})}
+                                            className="w-1/2 bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:border-d2d-gold focus:outline-none"
+                                        />
+                                    </div>
+                                </div>
+
+                                <button 
+                                    onClick={handleSaveLog}
+                                    disabled={!formData.metricId}
+                                    className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg transition-all ${
+                                        formData.metricId 
+                                        ? 'bg-d2d-gold text-black hover:bg-yellow-400' 
+                                        : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                    }`}
+                                >
+                                    {editingLogId ? 'Update Log' : 'Save Log'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Drawer Toggle */}
+                    <div className="absolute bottom-6 right-4 z-[40]">
+                        <button 
+                            onClick={() => setDrawerOpen(true)}
+                            className="bg-d2d-navy/90 text-d2d-gold p-4 rounded-full shadow-lg border border-d2d-gold/30 hover:scale-110 transition-transform"
+                        >
+                            <List size={24} />
+                        </button>
+                    </div>
+
+                    {/* Location Button */}
+                    <div className="absolute bottom-6 left-4 z-[40]">
+                         <button 
+                            onClick={() => {
+                                if (navigator.geolocation && mapRef.current) {
+                                    navigator.geolocation.getCurrentPosition(pos => {
+                                        mapRef.current.flyTo([pos.coords.latitude, pos.coords.longitude], 18);
+                                    });
+                                }
+                            }}
+                            className="bg-white/90 text-black p-4 rounded-full shadow-lg hover:bg-white transition-colors"
+                        >
+                            <MapPin size={24} />
+                        </button>
+                    </div>
+
+                    {/* History Drawer */}
+                    <div className={`absolute inset-x-0 bottom-0 z-[45] bg-slate-900/95 backdrop-blur-xl border-t border-d2d-gold/20 rounded-t-3xl transition-transform duration-300 ease-out transform ${drawerOpen ? 'translate-y-0' : 'translate-y-full'}`} style={{ height: '70vh', paddingBottom: '80px' }}>
+                        <div className="w-12 h-1.5 bg-gray-600 rounded-full mx-auto mt-3 mb-2 opacity-50" onClick={() => setDrawerOpen(false)}></div>
+                        <div className="p-6 h-full flex flex-col">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <List className="text-d2d-gold"/> Activity Log
+                                </h2>
+                                <button onClick={() => setDrawerOpen(false)} className="text-gray-400"><X size={24}/></button>
+                            </div>
+                            <div className="overflow-y-auto flex-1 space-y-3 no-scrollbar pb-12">
+                                {sortedLogs.length === 0 ? (
+                                    <p className="text-center text-gray-500 py-10">No activity recorded yet.</p>
+                                ) : (
+                                    sortedLogs.map(log => {
+                                        const metric = state.metrics.find(m => m.id === log.metricId);
+                                        if(!metric) return null;
+                                        return (
+                                            <div key={log.id} className="bg-white/5 p-3 rounded-xl border border-white/5">
+                                                <div className="flex justify-between items-start">
+                                                    <div className="flex items-start gap-3">
+                                                        <div className={`p-2 rounded-lg bg-black/20 ${metric.color}`}>
+                                                            {ICON_MAP[metric.icon]}
+                                                        </div>
+                                                        <div>
+                                                            <div className="font-bold text-gray-200 text-sm">{metric.label}</div>
+                                                            <div className="text-[10px] text-gray-500 font-mono">
+                                                                {new Date(log.timestamp).toLocaleTimeString()} • {new Date(log.timestamp).toLocaleDateString()}
+                                                            </div>
+                                                            {log.lat && <div className="text-[9px] text-d2d-gold/70 mt-0.5 flex items-center gap-1"><MapPin size={8}/> Location Tagged</div>}
+                                                        </div>
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => {
+                                                            setEditingLogId(log.id);
+                                                            setSelectedLocation({ lat: log.lat || 0, lng: log.lng || 0 }); // Fallback for list edit if needed, mainly for form
+                                                            // Populate form
+                                                            const dateObj = new Date(log.timestamp);
+                                                            setFormData({
+                                                                firstName: log.meta?.firstName || '',
+                                                                lastName: log.meta?.lastName || '',
+                                                                phone: log.meta?.phone || '',
+                                                                note: log.meta?.note || '',
+                                                                date: log.meta?.manualDate || dateObj.toISOString().split('T')[0],
+                                                                time: log.meta?.manualTime || dateObj.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+                                                                metricId: log.metricId
+                                                            });
+                                                            setDrawerOpen(false);
+                                                        }}
+                                                        className="p-2 text-gray-400 hover:text-white"
+                                                    >
+                                                        <PenSquare size={16} />
+                                                    </button>
+                                                </div>
+                                                {log.meta && (log.meta.note || log.meta.firstName) && (
+                                                    <div className="mt-2 pt-2 border-t border-white/5 text-xs text-gray-400">
+                                                        {log.meta.firstName && <span className="font-bold text-white block">{log.meta.firstName} {log.meta.lastName}</span>}
+                                                        {log.meta.phone && <span className="block text-blue-400">{log.meta.phone}</span>}
+                                                        {log.meta.note && <p className="mt-1 italic">"{log.meta.note}"</p>}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    })
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- DASHBOARD HEADER (Simplified for Sub-Header Use) ---
         const DashboardHeader = ({ state }) => {
             const { metrics, logs } = state;
             const inputMetric = metrics.find(m => m.isInput) || metrics[0] || { label: '?', id: '?' };
@@ -370,33 +850,18 @@
             const formattedInputLabel = stats.remaining === 1 ? makeSingular(inputMetric.label) : makePlural(inputMetric.label);
             const formattedGoalLabel = makeSingular(goalMetric.label);
 
-            // Contrast Logic
             const isLightMode = state.theme === 'light';
-            
-            // If Light Mode: Dark Navy Card. If Dark Mode: White Card.
             const cardClass = isLightMode 
                 ? "bg-slate-900 border border-slate-800 shadow-xl" 
                 : "bg-white border border-white/20 shadow-xl";
-            
             const mainTextColor = isLightMode ? "text-white" : "text-slate-900";
             const subTextColor = isLightMode ? "text-slate-400" : "text-slate-500";
             const labelColor = isLightMode ? "text-slate-300" : "text-slate-600";
             const trackBg = isLightMode ? "bg-white/10" : "bg-slate-200";
 
             return (
-                <div className="w-full glass-panel border-b border-d2d-glassBorder p-6 sticky top-0 z-20 shadow-2xl backdrop-blur-xl transition-colors duration-500">
-                    <div className="flex justify-between items-start mb-4">
-                        <div>
-                            <h1 className="text-xl font-black text-white tracking-widest uppercase transition-colors duration-500" style={{textShadow: '0 0 10px rgba(var(--bg-color), 0.3)'}}>D2D Resources</h1>
-                            <p className="text-[10px] text-d2d-gold font-bold tracking-[0.2em] mt-1 uppercase">Keys to Success</p>
-                        </div>
-                        <div className="bg-d2d-gold/10 p-2 rounded-full border border-d2d-gold/30 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
-                            <Key className="text-d2d-gold" size={24} />
-                        </div>
-                    </div>
-
+                <div className="w-full glass-panel border-b border-d2d-glassBorder p-6 shadow-2xl backdrop-blur-xl transition-colors duration-500">
                     <div className={`rounded-2xl p-6 relative overflow-hidden group transition-all duration-500 ${cardClass}`}>
-                        {/* Decorative Blob */}
                         <div className={`absolute top-0 right-0 w-32 h-32 bg-d2d-gold/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none ${isLightMode ? 'opacity-30' : 'opacity-60'}`}></div>
                         
                         <div className="flex flex-col items-center justify-center mb-6 relative z-10">
@@ -625,17 +1090,6 @@
                 });
 
             }, [state, timeFrame]);
-
-            const getColorHex = (tailwindClass) => {
-                if (tailwindClass.includes('blue')) return '#60a5fa';
-                if (tailwindClass.includes('indigo')) return '#818cf8';
-                if (tailwindClass.includes('purple')) return '#c084fc';
-                if (tailwindClass.includes('pink')) return '#f472b6';
-                if (tailwindClass.includes('gold') || tailwindClass.includes('yellow')) return '#f59e0b';
-                if (tailwindClass.includes('green')) return '#4ade80';
-                if (tailwindClass.includes('red')) return '#f87171';
-                return '#94a3b8';
-            };
 
             const tabs = [
                 { id: 'daily', label: 'Day' },
@@ -962,6 +1416,7 @@
             const [currentView, setCurrentView] = useState('tracker');
             const [isLoaded, setIsLoaded] = useState(false);
             const [alertModal, setAlertModal] = useState(null);
+            const [storageAlert, setStorageAlert] = useState(false);
             
             // Current Date Hook for resetting counts at midnight
             const [today, setToday] = useState(new Date());
@@ -981,36 +1436,75 @@
 
             useEffect(() => {
                 if (isLoaded) {
-                    saveState(state);
+                    const size = saveState(state);
                     if (state.theme === 'light') {
                         document.body.classList.add('light-mode');
                     } else {
                         document.body.classList.remove('light-mode');
                     }
-                }
-            }, [state, isLoaded]);
 
-            const handleLog = (metricId, value) => {
+                    // Check Storage limit
+                    if (size > MAX_STORAGE_BYTES && !storageAlert) {
+                        setStorageAlert(true);
+                    }
+                }
+            }, [state, isLoaded, storageAlert]);
+
+            const handleLog = (metricId, value, specificCoords = null, meta = null, timestamp = null) => {
                 const newLog = { 
                     id: crypto.randomUUID(), 
-                    timestamp: Date.now(), 
+                    timestamp: timestamp || Date.now(), 
                     metricId, 
                     value 
                 };
-                setState(prev => ({ ...prev, logs: [...prev.logs, newLog] }));
 
-                // Confetti Check (Goals only, positive value)
-                if (value > 0) {
-                    const metric = state.metrics.find(m => m.id === metricId);
-                    if (metric && metric.isGoal) {
-                        confetti({
-                            particleCount: 150,
-                            spread: 70,
-                            origin: { y: 0.7 },
-                            colors: ['#f59e0b', '#fbbf24', '#ffffff'] // Gold theme
-                        });
+                if (meta) newLog.meta = meta;
+
+                const finalizeLog = (log) => {
+                    setState(prev => ({ ...prev, logs: [...prev.logs, log] }));
+                    // Confetti Check (Goals only, positive value)
+                    if (value > 0) {
+                        const metric = state.metrics.find(m => m.id === metricId);
+                        if (metric && metric.isGoal) {
+                            confetti({
+                                particleCount: 150,
+                                spread: 70,
+                                origin: { y: 0.7 },
+                                colors: ['#f59e0b', '#fbbf24', '#ffffff'] // Gold theme
+                            });
+                        }
+                    }
+                };
+                
+                if (specificCoords) {
+                    newLog.lat = specificCoords.lat;
+                    newLog.lng = specificCoords.lng;
+                    finalizeLog(newLog);
+                } else {
+                    if ("geolocation" in navigator) {
+                        navigator.geolocation.getCurrentPosition(
+                            (position) => {
+                                newLog.lat = position.coords.latitude;
+                                newLog.lng = position.coords.longitude;
+                                finalizeLog(newLog);
+                            },
+                            (error) => {
+                                console.warn("GPS failed or denied", error);
+                                finalizeLog(newLog); // Save anyway
+                            },
+                            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+                        );
+                    } else {
+                        finalizeLog(newLog);
                     }
                 }
+            };
+
+            const handleUpdateLog = (logId, changes) => {
+                setState(prev => ({
+                    ...prev,
+                    logs: prev.logs.map(log => log.id === logId ? { ...log, ...changes } : log)
+                }));
             };
 
             const handleUpdateMetrics = (newMetrics) => {
@@ -1019,6 +1513,16 @@
 
             const handleResetData = () => {
                 setState(prev => ({ ...prev, logs: [] }));
+            };
+
+            const handlePruneData = () => {
+                // Keep the newest 70% of data
+                const sorted = [...state.logs].sort((a,b) => b.timestamp - a.timestamp);
+                const keepCount = Math.floor(sorted.length * 0.7);
+                const keptLogs = sorted.slice(0, keepCount).reverse(); // Put back in chronological order if needed, but array order doesn't strictly matter
+                
+                setState(prev => ({ ...prev, logs: keptLogs }));
+                setStorageAlert(false);
             };
 
             const toggleTheme = () => {
@@ -1059,51 +1563,64 @@
             if (!isLoaded) return <div className="min-h-screen flex items-center justify-center text-d2d-gold animate-pulse font-mono">LOADING...</div>;
 
             return (
-                <div className="min-h-screen flex flex-col max-w-md mx-auto relative overflow-hidden bg-transparent">
+                <div className="h-screen w-screen flex flex-col bg-transparent overflow-hidden">
                     
-                    {currentView === 'tracker' && <DashboardHeader state={state} />}
+                    {/* GLOBAL HEADER */}
+                    <TopBar onHome={() => attemptNavigation('tracker')} />
 
-                    <main className="flex-1 overflow-y-auto no-scrollbar relative z-10">
-                        {currentView === 'tracker' && (
-                        <div className="p-4 pb-32 space-y-2 animate-in fade-in slide-in-from-bottom-8 duration-500">
-                            {state.metrics.map(metric => (
-                            <TrackerPill 
-                                key={metric.id} 
-                                metric={metric} 
-                                count={getTodayCount(metric.id)} 
-                                onIncrement={() => handleLog(metric.id, 1)}
-                                onDecrement={() => handleLog(metric.id, -1)}
-                            />
-                            ))}
+                    <main className="flex-1 relative z-10 flex flex-col pt-[80px] pb-[80px] overflow-hidden">
+                        <div className="flex-1 overflow-y-auto no-scrollbar h-full relative">
+                            {/* KEEP MAP ALIVE: We use display:none to hide it instead of unmounting it */}
+                            <div className="absolute inset-0 z-0" style={{ display: currentView === 'map' ? 'block' : 'none' }}>
+                                <MapView state={state} onLog={handleLog} onUpdateLog={handleUpdateLog} theme={state.theme} />
+                            </div>
+
+                            {/* OTHER VIEWS */}
+                            {currentView === 'tracker' && (
+                            <div className="p-4 space-y-2 animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-md mx-auto relative z-10">
+                                <DashboardHeader state={state} />
+                                <div className="h-4"></div>
+                                {state.metrics.map(metric => (
+                                <TrackerPill 
+                                    key={metric.id} 
+                                    metric={metric} 
+                                    count={getTodayCount(metric.id)} 
+                                    onIncrement={() => handleLog(metric.id, 1)}
+                                    onDecrement={() => handleLog(metric.id, -1)}
+                                />
+                                ))}
+                                
+                                <div className="text-center text-gray-500 text-[10px] mt-8 pb-4 uppercase tracking-widest font-bold opacity-50">
+                                    DOMINATE YOUR DAY
+                                </div>
+
+                                {/* Theme Toggle Button */}
+                                <div className="flex justify-center pb-8">
+                                    <button 
+                                        onClick={toggleTheme}
+                                        className="flex items-center gap-2 bg-gray-800/10 hover:bg-gray-800/20 px-4 py-2 rounded-full border border-gray-700/20 transition-all text-xs font-bold text-gray-500 hover:text-d2d-gold"
+                                    >
+                                        {state.theme === 'dark' ? <Moon size={14} /> : <Sun size={14} />}
+                                        <span>{state.theme === 'dark' ? 'DARK MODE' : 'LIGHT MODE'}</span>
+                                    </button>
+                                </div>
+                            </div>
+                            )}
+
+                            {currentView === 'gamification' && <div className="max-w-md mx-auto relative z-10"><GamificationView state={state} /></div>}
                             
-                            <div className="text-center text-gray-500 text-[10px] mt-8 pb-4 uppercase tracking-widest font-bold opacity-50">
-                                DOMINATE YOUR DAY
-                            </div>
-
-                            {/* Theme Toggle Button (Moved to bottom of Home Screen) */}
-                            <div className="flex justify-center pb-8">
-                                <button 
-                                    onClick={toggleTheme}
-                                    className="flex items-center gap-2 bg-gray-800/10 hover:bg-gray-800/20 px-4 py-2 rounded-full border border-gray-700/20 transition-all text-xs font-bold text-gray-500 hover:text-d2d-gold"
-                                >
-                                    {state.theme === 'dark' ? <Moon size={14} /> : <Sun size={14} />}
-                                    <span>{state.theme === 'dark' ? 'DARK MODE' : 'LIGHT MODE'}</span>
-                                </button>
-                            </div>
+                            {currentView === 'stats' && <div className="max-w-md mx-auto relative z-10"><StatsView state={state} /></div>}
+                            
+                            {currentView === 'settings' && (
+                                <div className="max-w-md mx-auto relative z-10">
+                                    <SettingsView 
+                                        state={state} 
+                                        onUpdateMetrics={handleUpdateMetrics} 
+                                        onResetData={handleResetData}
+                                    />
+                                </div>
+                            )}
                         </div>
-                        )}
-
-                        {currentView === 'gamification' && <GamificationView state={state} />}
-                        
-                        {currentView === 'stats' && <StatsView state={state} />}
-                        
-                        {currentView === 'settings' && (
-                            <SettingsView 
-                                state={state} 
-                                onUpdateMetrics={handleUpdateMetrics} 
-                                onResetData={handleResetData}
-                            />
-                        )}
                     </main>
 
                     {/* Navigation Blocked Alert */}
@@ -1116,35 +1633,52 @@
                         onConfirm={() => setAlertModal(null)}
                     />
 
+                    {/* Storage Warning */}
+                    <Modal 
+                        isOpen={storageAlert} 
+                        title="Storage Full" 
+                        message="Your device storage for this app is getting full. Would you like to clean up old data? This will keep your recent stats but delete older logs." 
+                        type="prune"
+                        onClose={() => setStorageAlert(false)}
+                        onConfirm={handlePruneData}
+                    />
+
                     {/* Bottom Navigation */}
-                    <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-50 glass-panel border-t border-d2d-glassBorder p-2 safe-area-pb shadow-[0_-5px_20px_rgba(0,0,0,0.1)]">
-                        <div className="grid grid-cols-4 gap-1">
+                    <nav className="fixed bottom-0 left-0 right-0 z-50 h-[80px] glass-panel border-t border-d2d-glassBorder flex items-center justify-center safe-area-pb shadow-[0_-5px_20px_rgba(0,0,0,0.1)]">
+                        <div className="w-full max-w-md grid grid-cols-5 gap-1 px-2">
                             <button 
                                 onClick={() => attemptNavigation('tracker')}
-                                className={`flex flex-col items-center justify-center p-4 rounded-2xl transition-all duration-300 ${currentView === 'tracker' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
+                                className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-300 ${currentView === 'tracker' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
                             >
-                                <LayoutDashboard size={24} strokeWidth={currentView === 'tracker' ? 2.5 : 2} />
+                                <LayoutDashboard size={20} strokeWidth={currentView === 'tracker' ? 2.5 : 2} />
+                            </button>
+
+                            <button 
+                                onClick={() => attemptNavigation('map')}
+                                className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-300 ${currentView === 'map' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
+                            >
+                                <MapIcon size={20} strokeWidth={currentView === 'map' ? 2.5 : 2} />
                             </button>
                             
                             <button 
                                 onClick={() => attemptNavigation('gamification')}
-                                className={`flex flex-col items-center justify-center p-4 rounded-2xl transition-all duration-300 ${currentView === 'gamification' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
+                                className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-300 ${currentView === 'gamification' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
                             >
-                                <Trophy size={24} strokeWidth={currentView === 'gamification' ? 2.5 : 2} />
+                                <Trophy size={20} strokeWidth={currentView === 'gamification' ? 2.5 : 2} />
                             </button>
 
                             <button 
                                 onClick={() => attemptNavigation('stats')}
-                                className={`flex flex-col items-center justify-center p-4 rounded-2xl transition-all duration-300 ${currentView === 'stats' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
+                                className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-300 ${currentView === 'stats' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
                             >
-                                <BarChart2 size={24} strokeWidth={currentView === 'stats' ? 2.5 : 2} />
+                                <BarChart2 size={20} strokeWidth={currentView === 'stats' ? 2.5 : 2} />
                             </button>
                             
                             <button 
                                 onClick={() => attemptNavigation('settings')}
-                                className={`flex flex-col items-center justify-center p-4 rounded-2xl transition-all duration-300 ${currentView === 'settings' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
+                                className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-300 ${currentView === 'settings' ? 'text-d2d-gold bg-d2d-gold/10 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
                             >
-                                <Settings size={24} strokeWidth={currentView === 'settings' ? 2.5 : 2} />
+                                <Settings size={20} strokeWidth={currentView === 'settings' ? 2.5 : 2} />
                             </button>
                         </div>
                     </nav>
