@@ -252,7 +252,6 @@
         import confetti from 'canvas-confetti';
 
         // --- RAW SVG STRINGS FOR LEAFLET ICONS ---
-        // Since we can't render React components to HTML string easily in browser without server DOM
         const RAW_ICONS = {
             'door': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14"/><path d="M2 20h3"/><path d="M13 20h9"/><path d="M10 12v.01"/><path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z"/></svg>',
             'user': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
@@ -619,8 +618,9 @@
 
             const handleSaveLog = () => {
                 if (selectedLocation && formData.metricId) {
-                    const dateTimeStr = `${formData.date}T${formData.time}`;
-                    const timestamp = new Date(dateTimeStr).getTime() || Date.now();
+                    // We only set creation timestamp for new logs. 
+                    // Edits preserve the original timestamp.
+                    const timestamp = editingLogId ? undefined : Date.now();
 
                     const meta = {
                         firstName: formData.firstName,
@@ -632,14 +632,15 @@
                     };
 
                     if (editingLogId) {
-                        // Update existing
-                        onUpdateLog(editingLogId, {
+                        // Update existing (timestamp not passed = preserved)
+                        const changes = {
                             metricId: formData.metricId,
                             meta: meta,
-                            timestamp: timestamp,
                             lat: selectedLocation.lat,
                             lng: selectedLocation.lng
-                        });
+                        };
+                        if (timestamp) changes.timestamp = timestamp;
+                        onUpdateLog(editingLogId, changes);
                     } else {
                         // Create new
                         onLog(formData.metricId, 1, { lat: selectedLocation.lat, lng: selectedLocation.lng }, meta, timestamp);
@@ -747,7 +748,7 @@
 
                                     {/* Row 3: Note */}
                                     <textarea 
-                                        placeholder="Add a note..."
+                                        placeholder="Note / Appt. Reminder Section"
                                         rows="3"
                                         value={formData.note}
                                         onChange={e => setFormData({...formData, note: e.target.value})}
@@ -853,32 +854,45 @@
                                                         <div>
                                                             <div className="font-bold text-gray-200 text-sm">{metric.label}</div>
                                                             <div className="text-[10px] text-gray-500 font-mono">
-                                                                {new Date(log.timestamp).toLocaleTimeString()} • {new Date(log.timestamp).toLocaleDateString()}
+                                                                Logged: {new Date(log.timestamp).toLocaleTimeString()} • {new Date(log.timestamp).toLocaleDateString()}
                                                             </div>
-                                                            {log.lat && <div className="text-[9px] text-d2d-gold/70 mt-0.5 flex items-center gap-1"><MapPin size={8}/> Location Tagged</div>}
                                                         </div>
                                                     </div>
-                                                    <button 
-                                                        onClick={() => {
-                                                            setEditingLogId(log.id);
-                                                            setSelectedLocation({ lat: log.lat || 0, lng: log.lng || 0 }); // Fallback for list edit if needed, mainly for form
-                                                            // Populate form
-                                                            const dateObj = new Date(log.timestamp);
-                                                            setFormData({
-                                                                firstName: log.meta?.firstName || '',
-                                                                lastName: log.meta?.lastName || '',
-                                                                phone: log.meta?.phone || '',
-                                                                note: log.meta?.note || '',
-                                                                date: log.meta?.manualDate || dateObj.toISOString().split('T')[0],
-                                                                time: log.meta?.manualTime || dateObj.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
-                                                                metricId: log.metricId
-                                                            });
-                                                            setDrawerOpen(false);
-                                                        }}
-                                                        className="p-2 text-gray-400 hover:text-white"
-                                                    >
-                                                        <PenSquare size={16} />
-                                                    </button>
+                                                    <div className="flex gap-2">
+                                                        {log.lat && (
+                                                            <button 
+                                                                onClick={() => {
+                                                                    if(mapRef.current) {
+                                                                        mapRef.current.flyTo([log.lat, log.lng], 18);
+                                                                        setDrawerOpen(false);
+                                                                    }
+                                                                }}
+                                                                className="p-2 text-d2d-gold hover:text-white bg-white/5 rounded-lg"
+                                                            >
+                                                                <MapPin size={16} />
+                                                            </button>
+                                                        )}
+                                                        <button 
+                                                            onClick={() => {
+                                                                setEditingLogId(log.id);
+                                                                setSelectedLocation({ lat: log.lat || 0, lng: log.lng || 0 });
+                                                                const dateObj = new Date(log.timestamp);
+                                                                setFormData({
+                                                                    firstName: log.meta?.firstName || '',
+                                                                    lastName: log.meta?.lastName || '',
+                                                                    phone: log.meta?.phone || '',
+                                                                    note: log.meta?.note || '',
+                                                                    date: log.meta?.manualDate || dateObj.toISOString().split('T')[0],
+                                                                    time: log.meta?.manualTime || dateObj.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+                                                                    metricId: log.metricId
+                                                                });
+                                                                setDrawerOpen(false);
+                                                            }}
+                                                            className="p-2 text-gray-400 hover:text-white bg-white/5 rounded-lg"
+                                                        >
+                                                            <PenSquare size={16} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                                 {log.meta && (log.meta.note || log.meta.firstName) && (
                                                     <div className="mt-2 pt-2 border-t border-white/5 text-xs text-gray-400">
@@ -898,7 +912,6 @@
             );
         };
 
-        // --- DASHBOARD HEADER (Simplified for Sub-Header Use) ---
         const DashboardHeader = ({ state }) => {
             const { metrics, logs } = state;
             const inputMetric = metrics.find(m => m.isInput) || metrics[0] || { label: '?', id: '?' };
@@ -1530,52 +1543,57 @@
             }, [state, isLoaded, storageAlert]);
 
             const handleLog = (metricId, value, specificCoords = null, meta = null, timestamp = null) => {
+                const logId = crypto.randomUUID();
                 const newLog = { 
-                    id: crypto.randomUUID(), 
+                    id: logId, 
                     timestamp: timestamp || Date.now(), 
                     metricId, 
                     value 
                 };
 
                 if (meta) newLog.meta = meta;
-
-                const finalizeLog = (log) => {
-                    setState(prev => ({ ...prev, logs: [...prev.logs, log] }));
-                    // Confetti Check (Goals only, positive value)
-                    if (value > 0) {
-                        const metric = state.metrics.find(m => m.id === metricId);
-                        if (metric && metric.isGoal) {
-                            confetti({
-                                particleCount: 150,
-                                spread: 70,
-                                origin: { y: 0.7 },
-                                colors: ['#f59e0b', '#fbbf24', '#ffffff'] // Gold theme
-                            });
-                        }
-                    }
-                };
                 
                 if (specificCoords) {
                     newLog.lat = specificCoords.lat;
                     newLog.lng = specificCoords.lng;
-                    finalizeLog(newLog);
-                } else {
-                    if ("geolocation" in navigator) {
-                        navigator.geolocation.getCurrentPosition(
-                            (position) => {
-                                newLog.lat = position.coords.latitude;
-                                newLog.lng = position.coords.longitude;
-                                finalizeLog(newLog);
-                            },
-                            (error) => {
-                                console.warn("GPS failed or denied", error);
-                                finalizeLog(newLog); // Save anyway
-                            },
-                            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-                        );
-                    } else {
-                        finalizeLog(newLog);
+                }
+
+                // 1. Optimistic Update (Immediate)
+                setState(prev => ({ ...prev, logs: [...prev.logs, newLog] }));
+
+                // 2. Confetti (Immediate)
+                if (value > 0) {
+                    const metric = state.metrics.find(m => m.id === metricId);
+                    if (metric && metric.isGoal) {
+                        confetti({
+                            particleCount: 150,
+                            spread: 70,
+                            origin: { y: 0.7 },
+                            colors: ['#f59e0b', '#fbbf24', '#ffffff'] // Gold theme
+                        });
                     }
+                }
+
+                // 3. Async GPS (Background) - ONLY if no specific coords provided (e.g. Dashboard button click)
+                if (!specificCoords && "geolocation" in navigator) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            // Update the log we just added with coordinates
+                            setState(prev => ({
+                                ...prev,
+                                logs: prev.logs.map(l => 
+                                    l.id === logId 
+                                    ? { ...l, lat: position.coords.latitude, lng: position.coords.longitude } 
+                                    : l
+                                )
+                            }));
+                        },
+                        (error) => {
+                            console.warn("GPS update failed", error);
+                            // No action needed, log exists without coords
+                        },
+                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                    );
                 }
             };
 
