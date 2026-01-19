@@ -162,26 +162,26 @@
         }
         /* New Pin Styling */
         .marker-pin-enhanced {
-            width: 36px;
-            height: 36px;
+            width: 44px;
+            height: 44px;
             border-radius: 50% 50% 50% 0;
             background: #fff;
             position: absolute;
             transform: rotate(-45deg);
             left: 50%;
             top: 50%;
-            margin: -20px 0 0 -20px;
+            margin: -22px 0 0 -22px;
             box-shadow: 0 3px 15px rgba(0,0,0,0.5);
             display: flex;
             align-items: center;
             justify-content: center;
-            border: 2px solid white;
+            border: 3px solid white;
             transition: transform 0.2s;
         }
         .marker-pin-enhanced svg {
             transform: rotate(45deg); /* Counter rotate icon */
-            width: 18px;
-            height: 18px;
+            width: 22px;
+            height: 22px;
             color: white;
         }
         .marker-pin-enhanced:active {
@@ -246,7 +246,7 @@
             Award, Smile, Frown, ThumbsUp, ThumbsDown, ClipboardList, Target, 
             LayoutDashboard, BarChart2, Settings, Key, Minus, Plus, Save, 
             RefreshCw, Trash2, PlusCircle, X, AlertTriangle, Check, Trophy, Flame, Download, Map as MapIcon,
-            MapPin, List, Database, PenSquare
+            MapPin, List, Database, PenSquare, Crosshair
         } from 'lucide-react';
         import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
         import confetti from 'canvas-confetti';
@@ -458,12 +458,13 @@
         };
 
         // --- MAP VIEW COMPONENT ---
-        const MapView = ({ state, onLog, onUpdateLog, theme }) => {
+        const MapView = ({ state, onLog, onUpdateLog, theme, isVisible }) => {
             const mapRef = useRef(null);
             const mapContainerRef = useRef(null);
             const [drawerOpen, setDrawerOpen] = useState(false);
             const [selectedLocation, setSelectedLocation] = useState(null);
             const [editingLogId, setEditingLogId] = useState(null); // ID of log being edited, null if new
+            const [isAddMode, setIsAddMode] = useState(false);
 
             // Form State
             const [formData, setFormData] = useState({
@@ -475,6 +476,15 @@
                 time: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
                 metricId: null
             });
+
+            // Handle Resize / Re-render fixes when view becomes visible
+            useEffect(() => {
+                if (isVisible && mapRef.current) {
+                    setTimeout(() => {
+                        mapRef.current.invalidateSize();
+                    }, 100);
+                }
+            }, [isVisible]);
 
             // Initialize Map
             useEffect(() => {
@@ -495,19 +505,12 @@
                 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
                 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
 
-                // Handle Empty Space Click (New Pin)
+                // Handle Map Click (Only in Add Mode)
                 map.on('click', (e) => {
-                    setEditingLogId(null); // Clear editing mode
-                    setSelectedLocation(e.latlng);
-                    setFormData({
-                        firstName: '',
-                        lastName: '',
-                        phone: '',
-                        note: '',
-                        date: new Date().toISOString().split('T')[0],
-                        time: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
-                        metricId: null
-                    });
+                    // We need to access current isAddMode value. Since this closure is stale, we check the state setter or use ref in larger apps. 
+                    // For single file simplicity, we'll cheat a bit by relying on a data attribute or global, BUT properly in React we should use a ref for the active mode.
+                    // Instead, let's use the click handler logic dynamically based on state via another useEffect or keep it simple:
+                    // Since standard Leaflet events don't see updated React state easily without Re-refs, we'll set up the listener in a Effect that depends on isAddMode.
                 });
 
                 if (navigator.geolocation) {
@@ -525,6 +528,31 @@
                     }
                 };
             }, []);
+
+            // Handle Add Mode Click Listener
+            useEffect(() => {
+                if(!mapRef.current) return;
+
+                // Remove previous click handlers to update closure
+                mapRef.current.off('click');
+
+                mapRef.current.on('click', (e) => {
+                    if (isAddMode) {
+                        setEditingLogId(null); 
+                        setSelectedLocation(e.latlng);
+                        setFormData({
+                            firstName: '',
+                            lastName: '',
+                            phone: '',
+                            note: '',
+                            date: new Date().toISOString().split('T')[0],
+                            time: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+                            metricId: null
+                        });
+                        setIsAddMode(false); // Auto turn off add mode after placing? Or keep on? Let's turn off for safety.
+                    }
+                });
+            }, [isAddMode]);
 
             // Update Markers
             useEffect(() => {
@@ -548,15 +576,16 @@
                         const customIcon = L.divIcon({
                             className: 'custom-div-icon',
                             html: `<div class="marker-pin-enhanced" style="background-color: ${color}; border-color: white;">${iconSvg}</div>`,
-                            iconSize: [40, 40],
-                            iconAnchor: [20, 40],
-                            popupAnchor: [0, -40]
+                            iconSize: [48, 48], // Increased size for mobile
+                            iconAnchor: [24, 48],
+                            popupAnchor: [0, -48]
                         });
 
                         const marker = L.marker([log.lat, log.lng], { 
                             icon: customIcon,
                             draggable: true, 
-                            autoPan: true
+                            autoPan: true,
+                            zIndexOffset: 1000 // Ensure markers are above everything
                         }).addTo(mapRef.current);
 
                         // Click to Edit
@@ -620,12 +649,48 @@
                 }
             };
 
+            const handleExportCSV = () => {
+                // CSV Header
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "Type,Value,Date,Time,Lat,Lng,First Name,Last Name,Phone,Note\n";
+
+                state.logs.forEach(log => {
+                    const metric = state.metrics.find(m => m.id === log.metricId);
+                    if (!metric) return;
+                    
+                    const dateObj = new Date(log.timestamp);
+                    const date = dateObj.toLocaleDateString();
+                    const time = dateObj.toLocaleTimeString();
+                    const fname = log.meta?.firstName || "";
+                    const lname = log.meta?.lastName || "";
+                    const phone = log.meta?.phone || "";
+                    const note = (log.meta?.note || "").replace(/,/g, " "); // Basic escape commas
+
+                    csvContent += `${metric.label},${log.value},${date},${time},${log.lat || ""},${log.lng || ""},${fname},${lname},${phone},${note}\n`;
+                });
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `d2d_export_${new Date().toISOString().slice(0,10)}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+            };
+
             const sortedLogs = [...state.logs].sort((a,b) => b.timestamp - a.timestamp).slice(0, 50);
 
             return (
                 <div className="relative w-full h-full bg-gray-900">
                     <div ref={mapContainerRef} className="absolute inset-0 z-0" />
                     
+                    {/* Add Mode Indicator Overlay */}
+                    {isAddMode && (
+                        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[50] bg-d2d-gold text-black px-4 py-2 rounded-full shadow-xl font-bold text-sm animate-bounce pointer-events-none">
+                            Tap Map to Drop Pin
+                        </div>
+                    )}
+
                     {/* Manual Drop/Edit Modal */}
                     {selectedLocation && (
                         <div className="absolute inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
@@ -721,18 +786,27 @@
                         </div>
                     )}
 
-                    {/* Drawer Toggle */}
-                    <div className="absolute bottom-6 right-4 z-[40]">
+                    {/* Floating Controls Container (Bottom Right) - Moved UP above footer */}
+                    <div className="absolute bottom-[100px] right-4 z-[40] flex flex-col gap-3">
+                        {/* Add Mode Toggle */}
+                        <button 
+                            onClick={() => setIsAddMode(!isAddMode)}
+                            className={`p-4 rounded-full shadow-lg border border-white/20 transition-all active:scale-95 ${isAddMode ? 'bg-d2d-gold text-black rotate-45' : 'bg-blue-600 text-white'}`}
+                        >
+                            <Plus size={24} strokeWidth={3} />
+                        </button>
+
+                        {/* List/History */}
                         <button 
                             onClick={() => setDrawerOpen(true)}
-                            className="bg-d2d-navy/90 text-d2d-gold p-4 rounded-full shadow-lg border border-d2d-gold/30 hover:scale-110 transition-transform"
+                            className="bg-d2d-navy/90 text-d2d-gold p-4 rounded-full shadow-lg border border-d2d-gold/30 hover:scale-110 transition-transform active:scale-95"
                         >
                             <List size={24} />
                         </button>
                     </div>
 
-                    {/* Location Button */}
-                    <div className="absolute bottom-6 left-4 z-[40]">
+                    {/* Location Button (Bottom Left) - Moved UP above footer */}
+                    <div className="absolute bottom-[100px] left-4 z-[40]">
                          <button 
                             onClick={() => {
                                 if (navigator.geolocation && mapRef.current) {
@@ -741,9 +815,9 @@
                                     });
                                 }
                             }}
-                            className="bg-white/90 text-black p-4 rounded-full shadow-lg hover:bg-white transition-colors"
+                            className="bg-white/90 text-black p-4 rounded-full shadow-lg hover:bg-white transition-colors active:scale-95"
                         >
-                            <MapPin size={24} />
+                            <Crosshair size={24} />
                         </button>
                     </div>
 
@@ -755,7 +829,12 @@
                                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                     <List className="text-d2d-gold"/> Activity Log
                                 </h2>
-                                <button onClick={() => setDrawerOpen(false)} className="text-gray-400"><X size={24}/></button>
+                                <div className="flex gap-3">
+                                    <button onClick={handleExportCSV} className="text-blue-400 font-bold text-xs flex items-center gap-1 bg-blue-500/10 px-3 py-1 rounded-full">
+                                        <Download size={14}/> CSV
+                                    </button>
+                                    <button onClick={() => setDrawerOpen(false)} className="text-gray-400"><X size={24}/></button>
+                                </div>
                             </div>
                             <div className="overflow-y-auto flex-1 space-y-3 no-scrollbar pb-12">
                                 {sortedLogs.length === 0 ? (
@@ -1572,7 +1651,7 @@
                         <div className="flex-1 overflow-y-auto no-scrollbar h-full relative">
                             {/* KEEP MAP ALIVE: We use display:none to hide it instead of unmounting it */}
                             <div className="absolute inset-0 z-0" style={{ display: currentView === 'map' ? 'block' : 'none' }}>
-                                <MapView state={state} onLog={handleLog} onUpdateLog={handleUpdateLog} theme={state.theme} />
+                                <MapView state={state} onLog={handleLog} onUpdateLog={handleUpdateLog} theme={state.theme} isVisible={currentView === 'map'} />
                             </div>
 
                             {/* OTHER VIEWS */}
